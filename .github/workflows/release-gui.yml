@@ -1,0 +1,62 @@
+name: build-gui-release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install .
+          python -m pip install pyinstaller
+
+      - name: Build GUI
+        run: |
+          python -m PyInstaller --onefile --noconsole --clean --name ymd-gui --collect-all yandex_music ymd/gui.py
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ymd-gui.exe
+          body: |
+            Основные исправления и улучшения
+            - Исправлен краш WinError 183 при перезаписи трека: в core.py заменено rename() на replace() (атомарная замена файла).
+            - Починен pip install -e . в корне с кучей папок: в pyproject.toml добавлено явное packages = ["ymd"], чтобы setuptools не пытался упаковать папки с музыкой.
+
+            CLI (консольная версия)
+            - Добавлен параметр --workers для многопоточной загрузки.
+            - Реализована параллельная загрузка треков через ThreadPoolExecutor.
+            - Улучшена обработка плейлистов, включая ссылки вида lk.<uuid> и ik.<uuid> ("Мне нравится") через users_likes_tracks.
+
+            GUI (новая версия)
+            - Добавлен полноценный GUI: gui.py.
+            - В pyproject.toml добавлен entry-point yandex-music-downloader-gui.
+            - Добавлены: поле ссылки, предпросмотр "что будет загружено", выбор папки скачивания, выбор качества, поле "Потоки", прогресс скачивания, кнопка "Открыть папку".
+            - Поддержка русской/английской раскладки для Ctrl+C/V/X/A/Z/Y, плюс Ctrl+Insert/Shift+Insert/Shift+Delete.
+            - Добавлено нормальное Undo/Redo для полей.
+            - Исправлено "зависание" предпросмотра (очередь событий теперь обрабатывается постоянно).
+
+            UX/UI
+            - Интерфейс сначала был "карточный", затем упрощен в минималистичный.
+            - Текущий дизайн — светлая минималистичная тема.
+            - Убраны лишние пояснения ("лучшее качество = больше размер", "токен можно сохранить").
+            - Вместо кнопки "Сохранить" — чекбокс "Сохранить" рядом с полем токена.
+
+            Сохранение токена
+            - Токен сохраняется локально в конфиг:
+              Windows: gui.json
+              Linux: gui.json
+            - При следующем запуске токен автоматически подгружается, если чекбокс включен.

@@ -7,6 +7,7 @@ import time
 import typing
 from argparse import ArgumentTypeError
 from collections.abc import Callable, Generator, Iterable
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Optional, Union
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ TRACK_RE = re.compile(r"track/(\d+)")
 ALBUM_RE = re.compile(r"album/(\d+)$")
 ARTIST_RE = re.compile(r"artist/(\d+)$")
 PLAYLIST_RE = re.compile(r"([\w\-._@]+)/playlists/(\d+)$")
+PLAYLIST_LIKED_RE = re.compile(r"/playlists/((?:lk|ik)\.[\w-]+)$")
 
 FETCH_PAGE_SIZE = 10
 
@@ -107,6 +109,13 @@ def main():
         metavar="<Задержка>",
         type=checked_int_arg(0),
         help=show_default("Задержка между запросами, в секундах"),
+    )
+    common_group.add_argument(
+        "--workers",
+        default=1,
+        metavar="<Потоки>",
+        type=checked_int_arg(1),
+        help=show_default("Количество потоков (рекомендуется не более 4)"),
     )
     common_group.add_argument(
         "--stick-to-artist",
@@ -225,6 +234,8 @@ def main():
             args.album_id = match.group(1)
         elif match := TRACK_RE.search(path):
             args.track_id = match.group(1)
+        elif match := PLAYLIST_LIKED_RE.search(path):
+            args.playlist_id = match.group(1)
         elif match := PLAYLIST_RE.search(path):
             args.playlist_id = match.group(1) + "/" + match.group(2)
         else:
@@ -297,55 +308,45 @@ def main():
         result_tracks = track
         total_track_count = 1
     elif args.playlist_id is not None:
-        user, kind = args.playlist_id.split("/")
-        playlist = typing.cast(Playlist, client.users_playlists(kind, user))
-        total_track_count = playlist.track_count
+        if args.playlist_id.startswith(("lk.", "ik.")):
+            liked_tracks = client.users_likes_tracks()
+            track_ids = liked_tracks.tracks_ids if liked_tracks else []
+            total_track_count = len(track_ids)
 
-        def playlist_tracks_gen() -> Generator[Track]:
-            tracks = playlist.fetch_tracks()
-            for i in range(0, len(tracks), FETCH_PAGE_SIZE):
-                yield from client.tracks(
-                    [track.id for track in tracks[i : i + FETCH_PAGE_SIZE]]
-                )
+            def liked_tracks_gen() -> Generator[Track]:
+                for i in range(0, len(track_ids), FETCH_PAGE_SIZE):
+                    yield from client.tracks(track_ids[i : i + FETCH_PAGE_SIZE])
 
-        result_tracks = playlist_tracks_gen()
+            result_tracks = liked_tracks_gen()
+        else:
+            if "/" in args.playlist_id:
+                user, kind = args.playlist_id.split("/")
+                playlist = typing.cast(Playlist, client.users_playlists(kind, user))
+            else:
+                kind = args.playlist_id
+                playlist = typing.cast(Playlist, client.users_playlists(kind))
+            total_track_count = playlist.track_count
+
+            def playlist_tracks_gen() -> Generator[Track]:
+                tracks = playlist.fetch_tracks()
+                for i in range(0, len(tracks), FETCH_PAGE_SIZE):
+                    yield from client.tracks(
+                        [track.id for track in tracks[i : i + FETCH_PAGE_SIZE]]
+                    )
+
+            result_tracks = playlist_tracks_gen()
     else:
         raise ValueError("Invalid ID argument")
 
     track_counter = 0
     progress_status = ""
-    covers_cache = {}
-    for track in result_tracks:
-        if total_track_count:
-            track_counter += 1
-            progress_status = f"[{track_counter}/{total_track_count}] "
+    shared_covers_cache = {} if args.embed_cover and args.workers <= 1 else None
 
-        if not track.available:
-            print(f"{progress_status}Трек {track.title} не доступен для скачивания")
-            continue
-
-        save_path = args.dir / core.prepare_base_path(
-            args.path_pattern,
-            track,
-            args.unsafe_path,
-        )
-        if args.skip_existing:
-            if any(
-                Path(str(save_path) + s).is_file() for s in core.AUDIO_FILE_SUFFIXES
-            ):
-                continue
-
-        save_dir = save_path.parent
-        if not save_dir.is_dir():
-            save_dir.mkdir(parents=True)
-
-        downloadable = core.to_downloadable_track(track, args.quality, save_path)
-        bitrate = downloadable.download_info.bitrate
-        format_info = "[" + downloadable.download_info.file_format.codec.name
-        if bitrate > 0:
-            format_info += f" {bitrate}kbps"
-        format_info += "]"
-        print(f"{progress_status}{format_info} Загружается {downloadable.path}")
+    def run_download(downloadable: core.DownloadableTrack) -> None:
+        if args.embed_cover:
+            covers_cache = shared_covers_cache if args.workers <= 1 else {}
+        else:
+            covers_cache = None
         core.download_track(
             track_info=downloadable,
             lyrics_format=args.lyrics_format,
@@ -356,3 +357,85 @@ def main():
         )
         if args.delay > 0:
             time.sleep(args.delay)
+
+    if args.workers <= 1:
+        for track in result_tracks:
+            if total_track_count:
+                track_counter += 1
+                progress_status = f"[{track_counter}/{total_track_count}] "
+
+            if not track.available:
+                print(f"{progress_status}Трек {track.title} не доступен для скачивания")
+                continue
+
+            save_path = args.dir / core.prepare_base_path(
+                args.path_pattern,
+                track,
+                args.unsafe_path,
+            )
+            if args.skip_existing:
+                if any(
+                    Path(str(save_path) + s).is_file() for s in core.AUDIO_FILE_SUFFIXES
+                ):
+                    continue
+
+            save_dir = save_path.parent
+            if not save_dir.is_dir():
+                save_dir.mkdir(parents=True)
+
+            downloadable = core.to_downloadable_track(track, args.quality, save_path)
+            bitrate = downloadable.download_info.bitrate
+            format_info = "[" + downloadable.download_info.file_format.codec.name
+            if bitrate > 0:
+                format_info += f" {bitrate}kbps"
+            format_info += "]"
+            print(f"{progress_status}{format_info} Загружается {downloadable.path}")
+            run_download(downloadable)
+    else:
+        pending = set()
+        with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            for track in result_tracks:
+                if total_track_count:
+                    track_counter += 1
+                    progress_status = f"[{track_counter}/{total_track_count}] "
+
+                if not track.available:
+                    print(
+                        f"{progress_status}Трек {track.title} не доступен для скачивания"
+                    )
+                    continue
+
+                save_path = args.dir / core.prepare_base_path(
+                    args.path_pattern,
+                    track,
+                    args.unsafe_path,
+                )
+                if args.skip_existing:
+                    if any(
+                        Path(str(save_path) + s).is_file()
+                        for s in core.AUDIO_FILE_SUFFIXES
+                    ):
+                        continue
+
+                save_dir = save_path.parent
+                if not save_dir.is_dir():
+                    save_dir.mkdir(parents=True)
+
+                downloadable = core.to_downloadable_track(track, args.quality, save_path)
+                bitrate = downloadable.download_info.bitrate
+                format_info = "[" + downloadable.download_info.file_format.codec.name
+                if bitrate > 0:
+                    format_info += f" {bitrate}kbps"
+                format_info += "]"
+                print(f"{progress_status}{format_info} Загружается {downloadable.path}")
+                pending.add(executor.submit(run_download, downloadable))
+
+                if len(pending) >= args.workers * 2:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        future.result()
+
+            if pending:
+                done, _ = wait(pending)
+                for future in done:
+                    future.result()

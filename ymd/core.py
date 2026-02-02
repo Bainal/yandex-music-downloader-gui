@@ -428,5 +428,5 @@ def write_via_temporary_file(
     except InterruptedError as e:
         temporary_file.unlink()
         raise e
-    temporary_file.rename(target_path)
+    temporary_file.replace(target_path)
     return target_path

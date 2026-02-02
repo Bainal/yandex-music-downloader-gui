@@ -20,3 +20,7 @@ dependencies = [
 
 [project.scripts]
 yandex-music-downloader = "ymd.cli:main"
+yandex-music-downloader-gui = "ymd.gui:main"
+
+[tool.setuptools]
+packages = ["ymd"]
