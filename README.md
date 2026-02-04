@@ -118,28 +118,10 @@ py -3.14 -m PyInstaller --onefile --noconsole --clean --name ymd-gui --collect-a
 
 ---
 
-## 📦 Автосборка Release через GitHub Actions
-
-Workflow уже готов:
-
-```text
-.github/workflows/release-gui.yml
-```
-
-Чтобы собрать и опубликовать `.exe` в Release:
-
-```bash
-git tag v3.5.4
-git push origin v3.5.4
-```
-
-После пуша тега GitHub сам соберёт `ymd-gui.exe` и прикрепит к релизу.
-
----
 
 ## ⚠️ Важно
 
-- Используйте программу в рамках правил сервиса и законодательства вашей страны
+- Используйте программу в рамках правил сервиса
 - Не публикуйте токен в открытом доступе
 
 ---
