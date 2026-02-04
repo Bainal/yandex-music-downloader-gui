@@ -13,6 +13,7 @@
 </div>
 
 ---
+<img width="1016" height="786" alt="изображение" src="https://github.com/user-attachments/assets/433961c4-4d7c-4917-b81e-31e55ae19167" />
 
 ## ✨ Что умеет
 
