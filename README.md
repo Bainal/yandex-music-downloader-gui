@@ -13,7 +13,8 @@
 </div>
 
 ---
-<img width="889" height="651" alt="Sleekshot 2026-03-12 02-03-45" src="https://github.com/user-attachments/assets/cadfba91-c38f-4a79-b7a4-6e3d5187454f" />
+<img width="899" height="654" alt="изображение" src="https://github.com/user-attachments/assets/5fe78202-49b7-4686-84f1-77d3b2bb9cfd" />
+
 
 ## ✨ Что умеет
 
